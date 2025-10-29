@@ -16,6 +16,7 @@ The Config Server provides **centralized external configuration** for all micros
 - **Service Discovery:** Spring Cloud Netflix Eureka Client
 - **Backend:** Git (GitHub)
 - **Monitoring:** Spring Boot Actuator
+- **Containerization:** Docker
 - **Build Tool:** Maven
 
 ## 📦 Dependencies
@@ -70,6 +71,8 @@ ecommerce-config-repo/
 - Configurations are cached locally after the first fetch
 - The repository must be accessible (public or with SSH keys configured)
 
+---
+
 ## 🚀 How to Run
 
 ### Prerequisites
@@ -78,6 +81,90 @@ ecommerce-config-repo/
 - Maven 3.8+
 - Service Registry running on port 8761
 - Access to the configuration Git repository
+- Docker (for containerized deployment)
+
+---
+
+## 🐳 Option 1: Running with Docker (Recommended)
+
+### Quick Start
+
+```bash
+# Ensure Service Registry is running first
+docker run -d \
+  --name service-registry \
+  --network ecommerce-network \
+  -p 8761:8761 \
+  ecommerce-service-registry:latest
+
+# Run Config Server
+docker run -d \
+  --name config-server \
+  --network ecommerce-network \
+  -p 8888:8888 \
+  -e EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://service-registry:8761/eureka/ \
+  ecommerce-config-server:latest
+```
+
+### Building the Docker Image
+
+```bash
+# Clone the repository
+git clone https://github.com/DanLearnings/ecommerce-config-server.git
+cd ecommerce-config-server
+
+# Build the Docker image
+docker build -t ecommerce-config-server:latest .
+
+# Run the container
+docker run -d \
+  --name config-server \
+  --network ecommerce-network \
+  -p 8888:8888 \
+  ecommerce-config-server:latest
+```
+
+### Docker Environment Variables
+
+```bash
+# Run with custom configurations
+docker run -d \
+  --name config-server \
+  --network ecommerce-network \
+  -p 8888:8888 \
+  -e JAVA_OPTS="-Xmx1g -Xms512m" \
+  -e SPRING_CLOUD_CONFIG_SERVER_GIT_URI=https://github.com/YourOrg/your-config-repo \
+  -e SPRING_CLOUD_CONFIG_SERVER_GIT_DEFAULT_LABEL=main \
+  -e EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://service-registry:8761/eureka/ \
+  ecommerce-config-server:latest
+```
+
+### Viewing Logs
+
+```bash
+# View logs
+docker logs config-server
+
+# Follow logs in real-time
+docker logs -f config-server
+```
+
+### Stopping and Removing
+
+```bash
+# Stop the container
+docker stop config-server
+
+# Remove the container
+docker rm config-server
+
+# Stop and remove in one command
+docker rm -f config-server
+```
+
+---
+
+## 💻 Option 2: Running with Maven (Development)
 
 ### Running Locally
 
@@ -95,13 +182,7 @@ mvn clean package
 java -jar target/ecommerce-config-server-1.0.0.jar
 ```
 
-### Running with Docker (Coming Soon)
-
-```bash
-docker run -p 8888:8888 \
-  -e EUREKA_CLIENT_SERVICEURL_DEFAULTZONE=http://service-registry:8761/eureka/ \
-  ghcr.io/danlearnings/ecommerce-config-server:latest
-```
+---
 
 ## 🔍 Endpoints
 
@@ -160,6 +241,8 @@ curl http://localhost:8888/actuator/health
 
 Visit http://localhost:8761 and verify **CONFIG-SERVER** appears in the instances list.
 
+---
+
 ## ✅ Health Check
 
 Verify the service is working correctly:
@@ -175,10 +258,11 @@ curl http://localhost:8888/inventory-service/default
 curl http://localhost:8761/eureka/apps/CONFIG-SERVER
 ```
 
+---
+
 ## 🔧 How Client Services Connect
 
-Client services (like Inventory Service) connect by adding to their `application.yml`:
-
+### When running locally (Maven):
 ```yaml
 spring:
   application:
@@ -189,6 +273,20 @@ spring:
     config:
       fail-fast: true  # Fail if cannot connect to Config Server
 ```
+
+### When running in Docker:
+```yaml
+spring:
+  application:
+    name: inventory-service
+  config:
+    import: "configserver:http://config-server:8888"  # Use container name
+  cloud:
+    config:
+      fail-fast: true
+```
+
+---
 
 ## 🐛 Troubleshooting
 
@@ -232,6 +330,51 @@ spring:
 3. **Wait 30 seconds** for initial registration
 4. **Check logs** for connection errors
 
+### Docker: Git not found in container
+
+**Symptom:** Error logs show "git: command not found"
+
+**Solution:**
+```bash
+# This should already be included in the Dockerfile
+# Verify the Dockerfile contains:
+# RUN apk add --no-cache git
+
+# If missing, rebuild the image with updated Dockerfile
+```
+
+### Docker: Cannot connect to Service Registry
+
+**Symptom:** Config Server logs show Eureka connection errors
+
+**Solution:**
+```bash
+# Verify both containers are in the same network
+docker network inspect ecommerce-network
+
+# Ensure Service Registry is running and healthy
+docker ps | grep service-registry
+
+# Test connectivity
+docker exec config-server ping service-registry
+```
+
+### Docker: Configuration not updating
+
+**Symptom:** Changes in Git repo don't reflect in Config Server
+
+**Solution:**
+```bash
+# Git configurations are cached
+# Restart the container to force re-clone
+docker restart config-server
+
+# Or use the refresh endpoint
+curl -X POST http://localhost:8888/actuator/refresh
+```
+
+---
+
 ## 📚 Git Repository Best Practices
 
 ### File Naming Convention
@@ -259,6 +402,8 @@ ecommerce-config-repo/
 3. Global profile config (`application-prod.yml`)
 4. Global default config (`application.yml`)
 
+---
+
 ## 🔄 Refreshing Configuration at Runtime
 
 To refresh configuration without restarting services:
@@ -273,11 +418,40 @@ curl -X POST http://localhost:8081/actuator/refresh
 
 *Note: Requires `@RefreshScope` annotation on beans that should be refreshed*
 
+---
+
+## 🐳 Docker Image Details
+
+### Multi-stage Build
+
+The Dockerfile uses a multi-stage build:
+- **Stage 1 (build):** Uses Maven image to compile the application
+- **Stage 2 (runtime):** Uses lightweight JRE image with Git installed
+
+### Important Docker Features
+
+- **Git Installation:** `apk add --no-cache git` - Required to clone config repository
+- **Non-root user:** Runs as `spring:spring` for security
+- **Health check:** Built-in health check with 60s start period (allows time for Git clone)
+- **Environment variables:** Customizable Git URI, branch, and Eureka location
+
+### Health Check
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8888/actuator/health || exit 1
+```
+
+*Note: Longer start period (60s) allows time for Git repository cloning*
+
+---
+
 ## 📚 Additional Resources
 
 - [Spring Cloud Config Documentation](https://cloud.spring.io/spring-cloud-config/)
 - [Spring Cloud Config Reference](https://docs.spring.io/spring-cloud-config/docs/current/reference/html/)
 - [Configuration Repository](https://github.com/DanLearnings/ecommerce-config-repo)
+- [Docker Documentation](https://docs.docker.com/)
 
 ## 🔗 Related Services
 
@@ -285,10 +459,12 @@ curl -X POST http://localhost:8081/actuator/refresh
 - [Config Repository](https://github.com/DanLearnings/ecommerce-config-repo) - Stores configurations (required)
 - All microservices - Pull their configurations from this server
 
+---
+
 ## 👨‍💻 Maintainer
 
-**Dan Learnings**
-- GitHub: [@DanrleyBrasil](https://github.com/DanrleyBrasil)
+**Danrley Brasil (Dan Learnings)**
+- Personal GitHub: [@DanrleyBrasil](https://github.com/DanrleyBrasil)
 - Organization: [DanLearnings](https://github.com/DanLearnings)
 
 ---
