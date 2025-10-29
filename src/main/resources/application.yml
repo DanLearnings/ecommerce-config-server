@@ -11,7 +11,8 @@ spring:
           uri: https://github.com/DanLearnings/ecommerce-config-repo
           default-label: main
           clone-on-start: true
-        # Alternativa: usar filesystem local para começar
+          search-paths: configs
+        # Alternativa: usar filesystem local para comeï¿½ar
         # native:
         #   search-locations: classpath:/configs
 
